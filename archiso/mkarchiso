@@ -432,42 +432,61 @@ _make_customize_airootfs() {
     fi
 }
 
-# Build an EFI executable containing the kernel and platform device tree
-	_make_stubble_efi() {
-	    local dtb_path hwids_path kernel kernel_path kernelver module_dir
-	    local -a devicetree_args=() dtbs=()
+# Build EFI executables containing the kernel and platform device tree.
+# Keep the default automatically selected image, and add an LCD-specific
+# image for systems whose firmware reports the OLED device tree.
+_make_stubble_efi() {
+    local dtb_path hwids_path kernel_path kernelver module_dir pkgbase
+    local lcd_dtb_path lcd_kernel_path
+    local -a devicetree_args=() dtbs=()
 
-	    _msg_info "Generating a stubble EFI executable..."
-	    hwids_path="${pacstrap_dir}/usr/lib/systemd/boot/hwids/${uefi_arch[$arch],,}/"
-	    [[ -d "${hwids_path}" ]] || _msg_error "The '${hwids_path}' directory does not exist" 1
+    _msg_info "Generating stubble EFI executables..."
+    hwids_path="${pacstrap_dir}/usr/lib/systemd/boot/hwids/${uefi_arch[$arch],,}/"
+    [[ -d "${hwids_path}" ]] || _msg_error "The '${hwids_path}' directory does not exist" 1
 
-	    for module_dir in "${pacstrap_dir}/usr/lib/modules/"*; do
-	        # Skip directories without a pkgbase
-	        [[ -f "${module_dir}/pkgbase" ]] || continue
-	        pkgbase="$(<"${module_dir}/pkgbase")"
-	        kernelver="${module_dir##*/}"
-	        [[ -n "${kernelver}" ]] || _msg_error "Could not determine the version of kernel '${kernel}'"
-	        kernel_path="${boot_dir}/vmlinuz-${pkgbase}"
-	        # Stubble only supports qualcomm devices
-	        dtb_path="${pacstrap_dir}/usr/lib/modules/${kernelver}/dtb/qcom/"
-	        [[ -d "${dtb_path}" ]] || _msg_error "The '${dtb_path}' directory does not exist" 1
-	        _msg_info "Fusing DTBs with the kernel..."
-	        # Don't include the EL2 DTBs
-	        mapfile -d '' -t dtbs < <(find "${dtb_path}" -maxdepth 1 -type f -name '*.dtb' ! -name '*-el2.dtb' -print0)
-	        devicetree_args=("${dtbs[@]/#/--devicetree-auto=}")
+    for module_dir in "${pacstrap_dir}/usr/lib/modules/"*; do
+        # Skip directories without a pkgbase.
+        [[ -f "${module_dir}/pkgbase" ]] || continue
+        pkgbase="$(<"${module_dir}/pkgbase")"
+        kernelver="${module_dir##*/}"
+        kernel_path="${boot_dir}/vmlinuz-${pkgbase}"
 
-	        ukify build \
-	            --stub="${pacstrap_dir}/usr/lib/stubble/stubble.efi" \
-	            --uname="${kernelver}" \
-	            --linux="${kernel_path}" \
-	            --hwids="${hwids_path}" \
-	             "${devicetree_args[@]}" \
-	            --output="${kernel_path}"
-	    done
+        # Stubble only supports Qualcomm devices.
+        dtb_path="${pacstrap_dir}/usr/lib/modules/${kernelver}/dtb/qcom/"
+        [[ -d "${dtb_path}" ]] || _msg_error "The '${dtb_path}' directory does not exist" 1
 
-	    _msg_info "Done! Stubble EFI executable generated successfully."
-	}
+        # Build the LCD image before the default image replaces the raw kernel.
+        if [[ "${pkgbase}" == "linux-sp11" ]]; then
+            lcd_dtb_path="${dtb_path}/x1p64100-microsoft-denali.dtb"
+            [[ -f "${lcd_dtb_path}" ]] || _msg_error "The LCD device tree '${lcd_dtb_path}' does not exist" 1
+            lcd_kernel_path="${boot_dir}/vmlinuz-${pkgbase}-lcd"
 
+            _msg_info "Generating LCD-specific EFI executable..."
+            ukify build \
+                --stub="${pacstrap_dir}/usr/lib/stubble/stubble.efi" \
+                --uname="${kernelver}" \
+                --linux="${kernel_path}" \
+                --devicetree="${lcd_dtb_path}" \
+                --hwids="" \
+                --output="${lcd_kernel_path}"
+        fi
+
+        _msg_info "Fusing automatically selectable DTBs with '${pkgbase}'..."
+        # Don't include EL2 DTBs.
+        mapfile -d '' -t dtbs < <(find "${dtb_path}" -maxdepth 1 -type f -name '*.dtb' ! -name '*-el2.dtb' -print0)
+        devicetree_args=("${dtbs[@]/#/--devicetree-auto=}")
+
+        ukify build \
+            --stub="${pacstrap_dir}/usr/lib/stubble/stubble.efi" \
+            --uname="${kernelver}" \
+            --linux="${kernel_path}" \
+            --hwids="${hwids_path}" \
+            "${devicetree_args[@]}" \
+            --output="${kernel_path}"
+    done
+
+    _msg_info "Stubble EFI executables generated successfully."
+}
 # Set up boot loaders
 _make_bootmodes() {
     local bootmode
