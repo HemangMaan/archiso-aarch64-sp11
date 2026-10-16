@@ -467,7 +467,6 @@ _make_stubble_efi() {
                 --uname="${kernelver}" \
                 --linux="${kernel_path}" \
                 --devicetree="${lcd_dtb_path}" \
-                --hwids="" \
                 --output="${lcd_kernel_path}"
         fi
 
